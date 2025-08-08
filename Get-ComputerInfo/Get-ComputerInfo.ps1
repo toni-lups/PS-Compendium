@@ -9,7 +9,6 @@ $totalRamGB = [Math]::Round((Get-CimInstance -Class win32_computersystem -Comput
 # Get available disk space for all drives
 $disks = Get-CimInstance -Class Win32_LogicalDisk -Filter "DriveType=3"  # Filter only local disks (type 3)
 
-# Print the results
 Write-Host "Number of Logical CPU Cores: ${numberOfLogicalCores}"
 Write-Host "Total RAM: ${totalRamGB} GB"
 Write-Host "Available Disk Space on Drives:"
