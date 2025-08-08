@@ -2,7 +2,6 @@
 # ADT - Generator
 # $Version - A1
 # This script will generate random account data based on the fields below
-# probably need to change hl7 appsetings for workflow
 ############################################################################
 
 #region Variables
