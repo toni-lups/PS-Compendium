@@ -1,7 +1,7 @@
 ######################################################################################
-# Polymon - Performance Monitoring
-# Site - Covenant
-# $Version - A1
+# Polymon - Script Engine Performance Monitoring
+# Site - 
+# $Version - 
 # assumptions - prometheus-like format
 #  - Lines starting with '#' are HELP/TYPE metadata
 #  - TYPE comments are present in data, in the form "# TYPE METRIC_NAME METRIC_TYPE"
@@ -11,28 +11,78 @@
 #  - Labels are key="value", values are numeric, labels enclosed in curly braces
 ######################################################################################
 
-#region variables
-$remoteComputer = 'FUSCAC2TEST01'
-$url = 'http://127.0.0.1:5011/metrics'
+using namespace System.Collections.Generic
 
-$checkedMetrics = @( # list of metrics from ScriptEngine/metrics this script considers for alerting
-    'process_cpu_seconds_total', # counter
-    'process_num_threads', # gauge
-    'cac_workflow_evaluation_script_in_progress', # gauge
-    'cac_standard_workflow_accounts_in_progress', # gauge
-    'cac_custom_workflow_accounts_in_progress', # gauge
-    'cac_standard_workflow_account_duration', # histogram
-    'cac_custom_workflow_account_duration', # histogram
-    'cac_workflow_evaluation_script_duration' # histogram
+[CmdletBinding()]
+param (
+    [Parameter(Mandatory = $false)]
+    [ValidateScript({ Test-Path $_ -PathType Container }, ErrorMessage = 'provide a valid relative or absolute folder path')]
+    [string]$LogPath
 )
+
+#region variables
+$remoteMachineSE = 'FUSCAC2TEST01'
+$requestUri = 'http://127.0.0.1:5011/metrics'
+
+$alertingRules = @(
+    @{
+        Name             = 'HighRequestRate'
+        TargetMetricName = 'my_application_requests_total'
+        TargetLabel      = 'instance'
+        TargetLabelValue = 'app-server-01'
+        Threshold        = 1000 # Example threshold
+    }
+    
+    # Add more monitor rules here
+)
+
+# deprecated
+# $checkedMetrics = @( # list of metrics from ScriptEngine/metrics this script considers for alerting
+#     'process_cpu_seconds_total', # counter
+#     'process_num_threads', # gauge
+#     'cac_workflow_evaluation_script_in_progress', # gauge
+#     'cac_standard_workflow_accounts_in_progress', # gauge
+#     'cac_custom_workflow_accounts_in_progress', # gauge
+#     'cac_standard_workflow_account_duration', # histogram
+#     'cac_custom_workflow_account_duration', # histogram
+#     'cac_workflow_evaluation_script_duration' # histogram
+#)
 #endregion
 
-# convert /metrics response to a json-friendly object for ease of processing
-function ConvertFrom-Response {
-    [OutputType([PSCustomObject])]
+#region main functions
+function Parse-ScriptEngineMetrics {
+    [OutputType([List[PsCustomObject]])]
     param (
-        [string[]]$res
+        [Parameter(Mandatory = $true)]
+        [string[]]$RawData
     )
+
+    # convert /metrics raw response to a json-friendly object for ease of alerting
+    $parsedDataRes = [List[PSCustomObject]]::new() # for final return
+    $metricMetaData = @{} # track metric metadata (starting with #)
+
+    Write-Host 'Starting raw data parsing'
+    $RawData | ForEach-Object {
+        $line = $_.Trim()
+        Write-Verbose "Parsing metrics line: $line"
+
+        TryParse-MetricMetaDataLine -Line $line -InputMap $metricMetaData
+    }
+
+    Write-Verbose "final parsed metric metadata $($metricMetaData | ConvertTo-Json -Compress:$false -Depth 10)"
+
+    Write-Host "Completed parsing of Script Engine metrics with $($parsedDataRes.Count) metrics"
+    return $parsedDataRes
+}
+
+function Parse-ScriptEngineMetricsDeprecated {
+    [OutputType([List[PsCustomObject]])]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string[]]$RawData
+    )
+
+    $parsedDataRes = [List[PSCustomObject]]::new()
 
     # local util function
     function Update-HistogramEntry {
@@ -98,7 +148,7 @@ function ConvertFrom-Response {
 
     # process lines of raw data from ScriptEngine/metrics
     $metricsMap = @{}
-    foreach ($line in $res) {
+    foreach ($line in $RawData) {
         [string[]]$lineParts = $line.Split(' ')
 
         if ($line -like '# HELP*') { # handle HELP lines: skip
@@ -201,31 +251,107 @@ function ConvertFrom-Response {
     return $metricsMap
 }
 
-# get raw data from remote: ScriptEngine/metrics
-# try {
-#     $remoteResult = Invoke-Command -ComputerName $remoteComputer -ScriptBlock {
-#         param($url)
+function Get-ScriptEngineMetrics {
+    [OutputType([string[]])]
+    param ()
 
-#         return (Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 10) -split "`n"
-#     } -ArgumentList $url
-# } catch {
-#     $Status.StatusText = "Error completing ScriptEngine/metrics request: $($_.Exception.Message)"
-#     $Status.StatusID = 2
+    $headers = @{ 'Accept' = 'application/openmetrics-text; version=1.0.0; charset=utf-8' }
+    try {
+        Write-Host "Fetching from $requestUri on $remoteMachineSE"
 
-#     return
-# }
+        # get raw data from remote: ScriptEngine/metrics
+        $remoteResult = Invoke-Command -ComputerName $remoteMachineSE -ScriptBlock {
+            return (
+                Invoke-RestMethod -Uri $using:requestUri -Method Get -Headers $using:headers -TimeoutSec 15
+            ) -split "`n"
+        } -ErrorAction Stop
 
-$remoteResult = Get-Content -Path 'C:\Users\alupica\OneDrive - Dolbey Systems, Inc\Desktop\metrics_output.txt' # TODO FOR TESTING: REMOVE
-if (-not $remoteResult) {
-    $Status.StatusText = "Warning: Script Engine metrics call returned no results"
+        return $remoteResult
+    } catch {
+        Write-Error "Error completing ScriptEngine/metrics request: $($_.Exception.Message)"
+
+        return $null
+    }
+}
+#endregion
+
+#region helper functions
+function TryParse-MetricMetaDataLine {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$Line,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$InputMap 
+    )
+
+    # line is not a metadata line
+    if (-not $line.StartsWith('#')) {
+        return 
+    }
+
+    # regex patterns with named capture groups
+    $patterns = @{
+        Help = '# HELP (?<MetricName>\S+) (?<Help>.*)'
+        Type = '# TYPE (?<MetricName>\S+) (?<Type>.*)'
+    }
+
+    switch -Regex ($line) {
+        $patterns.Help {
+            $metricName = $Matches.MetricName
+            $metricHelp = $Matches.Help
+
+            # assume HELP metadata precedes TYPE metadata of the same family
+            $InputMap[$metricName] = @{ 
+                Help = $metricHelp
+                Type = 'unknown'
+            }
+
+            break
+        }
+
+        $patterns.Type {
+            $metricName = $Matches.MetricName
+            $metricType = $Matches.Type
+
+            if (-not $InputMap.ContainsKey($metricName)) {
+                $InputMap[$metricName] = @{}
+            }
+
+            $InputMap[$metricName].Type = $metricType
+            
+            break
+        }
+        
+        default {
+            Write-Warning "metadata line '$line' is not one of supported varieties ($( ($patterns.Keys) -join ', ' ))"
+        }
+    }
+}
+
+function Parse-MetricDataLine {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$Line,
+
+        [hashtable]$HashInput
+    )
+
+}
+#endregion
+
+# fetch
+$rawData = (Get-ScriptEngineMetrics) ?? ( Get-Content -Path 'C:\Users\alupica\OneDrive - Dolbey Systems, Inc\Desktop\metrics_output.txt' ) # TODO FOR TESTING: REMOVE RHS
+if (-not $rawData) {
+    $Status.StatusText = "Monitor failed to retrieve processing metrics data from the Script Engine on $remoteMachineSE"
     $Status.StatusID = 2
 
     return
 }
 
-# load raw data into structured dictionary
+# parse
 try {
-    $structuredData = ConvertFrom-Response -res $remoteResult
+    $parsedData = Parse-ScriptEngineMetrics -RawData $rawData
 } catch {
     Write-Host "$($_.Exception.Message)"
     $Status.StatusText = "Error parsing metrics data: $($_.Exception.Message)"
@@ -234,4 +360,14 @@ try {
     return
 }
 
-Write-Host $($structuredData | ConvertTo-Json -Compress:$false -Depth 10) # TODO FOR TESTING: REMOVE
+# log (if path given)
+if ($PSBoundParameters.ContainsKey('LogPath')) {
+
+}
+
+# alert 
+foreach ($Rule in $AlertRules) {
+    Invoke-Alert -ParsedMetrics $ParsedMetrics -AlertRuleName $Rule.Name -AlertParameters $Rule
+}
+
+Write-Host 'Script Engine metrics monitoring completed'
