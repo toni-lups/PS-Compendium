@@ -1,15 +1,9 @@
-######################################################################################
+###################################################
 # Polymon - Script Engine Performance Monitoring
-# Site - 
 # $Version - 
-# assumptions - prometheus-like format
-#  - Lines starting with '#' are HELP/TYPE metadata
-#  - TYPE comments are present in data, in the form "# TYPE METRIC_NAME METRIC_TYPE"
-#  - metric names are constant, label names are constant
-#  - whitespace is used to parse keys and values
-#  - histogram bucket identifiers (script_name and le), are enclosed in curly
-#  - Labels are key="value", values are numeric, labels enclosed in curly braces
-######################################################################################
+# Assumptions - prometheus-like format
+# TODO - add more key assumptions
+###################################################
 
 using namespace System.Collections.Generic
 
@@ -20,7 +14,7 @@ param (
     [string]$LogPath
 )
 
-#region variables
+# --- variables ----
 $remoteMachineSE = 'FUSCAC2TEST01'
 $requestUri = 'http://127.0.0.1:5011/metrics'
 
@@ -30,317 +24,124 @@ $alertingRules = @(
         TargetMetricName = 'my_application_requests_total'
         TargetLabel      = 'instance'
         TargetLabelValue = 'app-server-01'
-        Threshold        = 1000 # Example threshold
+        Threshold        = 1000
     }
     
     # Add more monitor rules here
 )
 
-# deprecated
-# $checkedMetrics = @( # list of metrics from ScriptEngine/metrics this script considers for alerting
-#     'process_cpu_seconds_total', # counter
-#     'process_num_threads', # gauge
-#     'cac_workflow_evaluation_script_in_progress', # gauge
-#     'cac_standard_workflow_accounts_in_progress', # gauge
-#     'cac_custom_workflow_accounts_in_progress', # gauge
-#     'cac_standard_workflow_account_duration', # histogram
-#     'cac_custom_workflow_account_duration', # histogram
-#     'cac_workflow_evaluation_script_duration' # histogram
-#)
-#endregion
+# --- models (PowerShell 5+) ---
+class MetricPoint {
+    [string]    $Name     # full name as read from line (e.g., http_request_duration_seconds_bucket)
+    [string]    $BaseName # base name with suffix (kind) removed (e.g., http_request_duration_seconds)
+    [string]    $Type     # from TYPE metadata
+    [string]    $Kind
+    [hashtable] $Labels   # labels (if any)
+    [double]    $Value
 
-#region main functions
-function Parse-ScriptEngineMetrics {
-    [OutputType([List[PsCustomObject]])]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string[]]$RawData
-    )
-
-    # convert /metrics raw response to a json-friendly object for ease of alerting
-    $parsedDataRes = [List[PSCustomObject]]::new() # for final return
-    $metricMetaData = @{} # track metric metadata (starting with #)
-
-    Write-Host 'Starting raw data parsing'
-    $RawData | ForEach-Object {
-        $line = $_.Trim()
-        Write-Verbose "Parsing metrics line: $line"
-
-        TryParse-MetricMetaDataLine -Line $line -InputMap $metricMetaData
+    MetricPoint([string] $name, [hashtable]$labels = @{}, [double]$value) {
+        # TODO implement
     }
 
-    Write-Verbose "final parsed metric metadata $($metricMetaData | ConvertTo-Json -Compress:$false -Depth 10)"
+    static [List[MetricPoint]] ParseLines([string[]]$Lines) {
+        $points = [List[MetricPoint]]::new() 
+        $meta = @{} # track metric metadata seperately (lines starting with '#')
 
-    Write-Host "Completed parsing of Script Engine metrics with $($parsedDataRes.Count) metrics"
-    return $parsedDataRes
-}
+        Write-Host 'Starting raw data parsing'
+        foreach ($line in $Lines) {
+            $line = $line.Trim()
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
 
-function Parse-ScriptEngineMetricsDeprecated {
-    [OutputType([List[PsCustomObject]])]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string[]]$RawData
-    )
+            # produce a metric point, or update metadata 
+            Write-Verbose "Parsing metrics line: $line"
+            $point = [MetricPoint]::FromLine($line, $meta)
 
-    $parsedDataRes = [List[PSCustomObject]]::new()
-
-    # local util function
-    function Update-HistogramEntry {
-        param (
-            [PSCustomObject]$metricsMap,
-            [string]$metricName,
-            [string]$lineType,
-            [string]$lineValue,
-            [string]$scriptName,
-            [string]$leValue
-        )
-
-        # handle CDI evaluation script histogram
-        $currMetric = $metricsMap[$metricName]
-        if ($scriptName) {
-
-            # add scripts property if not exist
-            if (-not $currMetric.scripts) {
-                $currMetric | Add-Member -NotePropertyName scripts -NotePropertyValue @{}
-            }
-
-            # set a new scripts entry
-            if (-not $currMetric.scripts[$scriptName]) {
-               $currMetric.scripts[$scriptName] = [PSCustomObject]@{}
-            }
-
-            if ($lineType -eq 'bucket') {
-                
-                # add buckets property if not exist
-                if (-not $currMetric.scripts[$scriptName].buckets) {
-                    $currMetric.scripts[$scriptName] | Add-Member -NotePropertyName buckets -NotePropertyValue @{}
-                }
-
-                # set a new bucket entry
-                if (-not $currMetric.scripts[$scriptName].buckets[$leValue]) {
-                    $currMetric.scripts[$scriptName].buckets[$leValue] = [double]$lineValue
-                }
-            } else {
-                $currMetric.scripts[$scriptName] | Add-Member `
-                    -NotePropertyName $lineType `
-                    -NotePropertyValue ([double]$lineValue)
-            }
-
-        } else { # handle standard histogram: flat
-            if ($lineType -eq 'bucket') {
-                
-                # add buckets property if not exist
-                if (-not $currMetric.buckets) {
-                    $currMetric | Add-Member -NotePropertyName buckets -NotePropertyValue @{}
-                }
-
-                # set a new bucket entry
-                if (-not $currMetric.buckets[$leValue]) {
-                    $currMetric.buckets[$leValue] = [double]$lineValue
-                }
-            } else {
-                $currMetric | Add-Member -NotePropertyName $lineType -NotePropertyValue ([double]$lineValue)
-            }
+            if ($point) { $points.Add($point) }  
         }
 
-        return $metricsMap
+        Write-Host "Completed parsing of Script Engine metrics with $($points.Count) metrics"
+        return $points
     }
 
-    # process lines of raw data from ScriptEngine/metrics
-    $metricsMap = @{}
-    foreach ($line in $RawData) {
-        [string[]]$lineParts = $line.Split(' ')
+    hidden static [MetricPoint] FromLine(
+        [string]$line,
+        [hashtable]$meta # in/out
+    ) {
+        if ($line.StartsWith('#')) { # update metadata
 
-        if ($line -like '# HELP*') { # handle HELP lines: skip
-            continue
-        } elseif ($line -like '# TYPE*') { # handle TYPE lines: initialize dictionary metric key
-
-            if ($lineParts.Count -ne 4) {
-                throw "Encountered unexpected data format from ScriptEngine/metrics: $line"
+            # regex patterns with named capture groups
+            $metaPatterns = @{
+                Help = '# HELP (?<MetricName>\S+) (?<Help>.*)'
+                Type = '# TYPE (?<MetricName>\S+) (?<Type>.*)'
             }
 
-            $metricName = $lineParts[2]
-            $metricType = $lineParts[3]
+            switch -Regex ($line) {
+                $metaPatterns.Help {
+                    $metricName = $Matches.MetricName
+                    $metricHelp = $Matches.Help
 
-            # initialize a metric dict entry if not already created and is a member of the supported metrics list
-            if (-not $metricsMap.ContainsKey($metricName) -and $checkedMetrics.Contains($metricName)) {
-                $metricsMap[$metricName] = [PSCustomObject]@{
-                    type = $metricType
+                    $meta[$metricName] = @{ 
+                        Help = $metricHelp
+                        Type = 'unknown'
+                    }
+
+                    return $null
                 }
-            }
 
-            continue
-        }
+                $metaPatterns.Type {
+                    $metricName = $Matches.MetricName
+                    $metricType = $Matches.Type
 
-        # handle data lines: collect data under metric key
-        $metricName = $metricsMap.Keys | Where-Object { 
+                    if (-not $meta.ContainsKey($metricName)) {
+                        $meta[$metricName] = @{}
+                    }
+
+                    $meta[$metricName].Type = $metricType
             
-            # match line with initialized key
-            $lineParts[0] -like "$_*" 
-        }
+                    return $null
+                }
         
-        # if not matched skip the line: unchecked metric
-        if (-not $metricName) {
-            continue
-        }
-
-        $metricValue = $lineParts[1]
-        if ($metricsMap[$metricName].type -in @('gauge', 'counter')) {
-            
-            # simply add the line value for gauge and counter metrics
-            $metricsMap[$metricName] | Add-Member -NotePropertyName value -NotePropertyValue $metricValue
-
-        } elseif ($metricsMap[$metricName].type -eq 'histogram') {
-            
-            # optional histogram identifiers
-            $scriptName = $null
-            $leValue = $null  
-            if ($lineParts[0].Contains('{') -and $lineParts[0].Contains('}')) {
-                
-                # try to extract identifiers script_name and le
-                $contentStart = $lineParts[0].IndexOf('{') + 1
-                $contentEnd = $lineParts[0].IndexOf('}')
-                $content = $lineParts[0].Substring($contentStart, $contentEnd - $contentStart)
-
-                foreach ($kvp in $content -split ',') {
-                    $key, $value = $kvp.Split('=')
-                    $key = $key.Trim()
-                    $value = $value.Trim('"')
-
-                    # script_name and le are the expected possible keys
-                    if ($key -eq 'script_name') { $scriptName = $value }
-                    elseif ($key -eq 'le') { $leValue = $value }
+                default {
+                    Write-Warning "metadata line '$line' is malformed, or not one of supported varieties ($( ($metaPatterns.Keys) -join ', ' ))"
+                    return $null
                 }
             }
-            
-            # store line value according to line type (sum, count, bucket) and identifiers
-            switch -wildcard ($lineParts[0]) {
-                "${metricName}_sum*" {
-                    $metricsMap = Update-HistogramEntry `
-                        -metricsMap $metricsMap `
-                        -metricName $metricName `
-                        -lineType 'sum' `
-                        -lineValue $metricValue `
-                        -scriptName $scriptName
-                }
+        } 
 
-                "${metricName}_count*" {
-                    $metricsMap = Update-HistogramEntry `
-                        -metricsMap $metricsMap `
-                        -metricName $metricName `
-                        -lineType 'count' `
-                        -lineValue $metricValue `
-                        -scriptName $scriptName
-                }
-                
-                "${metricName}_bucket*" {
-                    $metricsMap = Update-HistogramEntry `
-                        -metricsMap $metricsMap `
-                        -metricName $metricName `
-                        -lineType 'bucket' `
-                        -lineValue $metricValue `
-                        -scriptName $scriptName `
-                        -leValue $leValue
-                }
-
-                default { throw "Encountered unexpected data format from ScriptEngine/metrics: $_" }
-            }
-        }
+        # process a data line
+        $labels = [MetricPoint]::ParseLabels($line)
+        # TODO left off here
     }
 
-    return $metricsMap
-}
+    #--- helpers ---
+    hidden static [hashtable] ParseLabels([string]$line) {  
+        $result = @{} 
 
-function Get-ScriptEngineMetrics {
-    [OutputType([string[]])]
-    param ()
-
-    $headers = @{ 'Accept' = 'application/openmetrics-text; version=1.0.0; charset=utf-8' }
-    try {
-        Write-Host "Fetching from $requestUri on $remoteMachineSE"
-
-        # get raw data from remote: ScriptEngine/metrics
-        $remoteResult = Invoke-Command -ComputerName $remoteMachineSE -ScriptBlock {
-            return (
-                Invoke-RestMethod -Uri $using:requestUri -Method Get -Headers $using:headers -TimeoutSec 15
-            ) -split "`n"
-        } -ErrorAction Stop
-
-        return $remoteResult
-    } catch {
-        Write-Error "Error completing ScriptEngine/metrics request: $($_.Exception.Message)"
-
-        return $null
-    }
-}
-#endregion
-
-#region helper functions
-function TryParse-MetricMetaDataLine {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$Line,
-
-        [Parameter(Mandatory = $true)]
-        [hashtable]$InputMap 
-    )
-
-    # line is not a metadata line
-    if (-not $line.StartsWith('#')) {
-        return 
-    }
-
-    # regex patterns with named capture groups
-    $patterns = @{
-        Help = '# HELP (?<MetricName>\S+) (?<Help>.*)'
-        Type = '# TYPE (?<MetricName>\S+) (?<Type>.*)'
-    }
-
-    switch -Regex ($line) {
-        $patterns.Help {
-            $metricName = $Matches.MetricName
-            $metricHelp = $Matches.Help
-
-            # assume HELP metadata precedes TYPE metadata of the same family
-            $InputMap[$metricName] = @{ 
-                Help = $metricHelp
-                Type = 'unknown'
-            }
-
-            break
+        $labelBoundLeft = $line.IndexOf('{')
+        if ($labelBoundLeft -eq -1) { # no labels to take
+            return @{}
         }
 
-        $patterns.Type {
-            $metricName = $Matches.MetricName
-            $metricType = $Matches.Type
-
-            if (-not $InputMap.ContainsKey($metricName)) {
-                $InputMap[$metricName] = @{}
-            }
-
-            $InputMap[$metricName].Type = $metricType
-            
-            break
+        $labelBoundRight = $line.IndexOf('}', $labelBoundLeft + 1)
+        if (($labelBoundRight -eq -1) -or ($labelBoundRight -gt $labelBoundLeft)) {
+            Write-Warning "Unable to parse labels from line: $line"
+            return @{}
         }
-        
-        default {
-            Write-Warning "metadata line '$line' is not one of supported varieties ($( ($patterns.Keys) -join ', ' ))"
+
+        $content = $line.Substring($labelBoundLeft + 1, ($labelBoundRight - $labelBoundLeft) - 1)
+        foreach ($kvp in ($content -split ',')) {
+            $key, $val = $kvp -split '='
+
+            # TODO left off here
         }
+
+        return $result
     }
 }
 
-function Parse-MetricDataLine {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$Line,
+# --- monitor main ---
 
-        [hashtable]$HashInput
-    )
-
-}
-#endregion
-
-# fetch
+# 1) fetch
 $rawData = (Get-ScriptEngineMetrics) ?? ( Get-Content -Path 'C:\Users\alupica\OneDrive - Dolbey Systems, Inc\Desktop\metrics_output.txt' ) # TODO FOR TESTING: REMOVE RHS
 if (-not $rawData) {
     $Status.StatusText = "Monitor failed to retrieve processing metrics data from the Script Engine on $remoteMachineSE"
@@ -349,7 +150,7 @@ if (-not $rawData) {
     return
 }
 
-# parse
+# 2) parse
 try {
     $parsedData = Parse-ScriptEngineMetrics -RawData $rawData
 } catch {
@@ -360,12 +161,12 @@ try {
     return
 }
 
-# log (if path given)
+# 3) log (if path given)
 if ($PSBoundParameters.ContainsKey('LogPath')) {
 
 }
 
-# alert 
+# 4) alert 
 foreach ($Rule in $AlertRules) {
     Invoke-Alert -ParsedMetrics $ParsedMetrics -AlertRuleName $Rule.Name -AlertParameters $Rule
 }
