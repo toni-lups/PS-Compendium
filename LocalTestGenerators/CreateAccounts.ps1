@@ -1,12 +1,12 @@
 ############################################################################
 # ADT - Generator
 # $Version - A1
-# Date 08/08/2025
+# Date 12/16/2025
 # This script will generate random account data based on the fields below
 ############################################################################
 
 #region Variables
-$numAccountsCreate = 10000
+$numAccountsCreate = 100
 $destinationAdtPort = 7500
 $destinationAdtIp = '127.0.0.1' 
 $acctNumberPrepend = 'AUTO'
@@ -58,7 +58,7 @@ $lastName = @(
     'Jones', 'Wilson', 'Jackson', 'Brown', 'Smith', 'Ericsson', 
     'Robinson', 'Williams', 'Johnson', 'Gibson', 'Jefferson', 
     'Stevenson', 'Thornhill', 'Webster', 'Rawlings', 'Wilkinson', 
-    'Snodgrass', 'Cartwright', 'Cunningham', 'Lupica', 'Rockefeller',
+    'Snodgrass', 'Cartwright', 'Cunningham', 'Rockefeller',
     'Mazzolini'
 )
 
@@ -66,7 +66,7 @@ $lastName = @(
 $patientClass = 'I', 'E', 'O' 
 $patientType = 'C', 'N', 'Y', 'Z', 'U', 'D', 'L'
 
-$admitReason = @( # add elements for more possible admit diagnoses
+$admitReason = @(
     [PSCustomObject]@{ Code = 'R06.02'; Description = 'Shortness of Breath' },
     [PSCustomObject]@{ Code = 'R10.9'; Description = 'Abdominal Pain' },
     [PSCustomObject]@{ Code = 'Q05.1'; Description = 'Thoracic Spina Bifida without Hydrocephalus' },
@@ -111,9 +111,9 @@ $admitReason = @( # add elements for more possible admit diagnoses
     [PSCustomObject]@{ Code = 'I48.91'; Description = 'Unspecified Atrial Fibrillation' },
     [PSCustomObject]@{ Code = 'G80.9'; Description = 'Cerebral Palsy (CP)' },
     [PSCustomObject]@{ Code = 'Q74.0'; Description = 'Acquired Clubhand' },
-    [PSCustomObject]@{ Code = 'W59.22'; Description = 'Struck by a Turtle' },
-    [PSCustomObject]@{ Code = 'R14.3'; Description = 'Flatulence; Causing Injury' },
-    [PSCustomObject]@{ Code = 'Z60.4'; Description = 'Social Exclusion and/or Rejection' }
+    [PSCustomObject]@{ Code = 'W59.22'; Description = 'Struck by a Turtle' }
+
+    <# add elements for more possible admit diagnoses #>
 )
 
 $facility = 'Dolbey_Memorial_North', 'Dolbey_West', 'Dolbey_North', 'Dolbey_South', 'Dolbey', 'Dolbey_Memorial_South' 
