@@ -1,9 +1,11 @@
 ############################################################################
-# ADT - Generator
-# $Version - A1
-# Date 12/16/2025
-# This script will generate random account data based on the fields below
+# ADT - Test Generator
+# $Version - A2
+# Date 12/23/2025
+# Generate random account data based on the fields below
 ############################################################################
+
+#Requires -PSEdition Core
 
 #region Variables
 $numAccountsCreate = 100
@@ -95,6 +97,7 @@ $admitReason = @(
     [PSCustomObject]@{ Code = 'R03.0'; Description = 'Abnormal Blood Pressure Reading' },
     [PSCustomObject]@{ Code = 'R68.12'; Description = 'Fussiness in Infant/Child' },
     [PSCustomObject]@{ Code = 'R09.02'; Description = 'Hypoxia' },
+    [PSCustomObject]@{ Code = 'W59.22'; Description = 'Struck by a Turtle' },
     [PSCustomObject]@{ Code = 'H25.9'; Description = 'Cataract, Unspecified' },
     [PSCustomObject]@{ Code = 'K63.5'; Description = 'Colon Polyps' },
     [PSCustomObject]@{ Code = 'E10.10'; Description = 'DKA with Dehydration' },
@@ -110,8 +113,7 @@ $admitReason = @(
     [PSCustomObject]@{ Code = 'J44.9'; Description = 'Chronic Obstructive Pulmonary Disease, Unspecified' },
     [PSCustomObject]@{ Code = 'I48.91'; Description = 'Unspecified Atrial Fibrillation' },
     [PSCustomObject]@{ Code = 'G80.9'; Description = 'Cerebral Palsy (CP)' },
-    [PSCustomObject]@{ Code = 'Q74.0'; Description = 'Acquired Clubhand' },
-    [PSCustomObject]@{ Code = 'W59.22'; Description = 'Struck by a Turtle' }
+    [PSCustomObject]@{ Code = 'Q74.0'; Description = 'Acquired Clubhand' }
 
     <# add elements for more possible admit diagnoses #>
 )
