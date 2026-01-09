@@ -282,7 +282,7 @@ function Send-StringOverTcp (
     [Parameter(Mandatory = $True)]
     [UInt16]$Port,
 
-    [int]$SleepMS = $( if ($withSleepMS) { $WithSleepMS } else { 0 } )
+    [int]$SleepMS = $( if ($WithSleepMS) { $WithSleepMS } else { 0 } )
 ) {
     Start-Sleep -Milliseconds $SleepMS
 
