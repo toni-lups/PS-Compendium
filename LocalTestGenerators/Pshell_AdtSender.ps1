@@ -8,8 +8,8 @@
 $numAccountsCreate = 5
 $destinationAdtPort = 7500
 $destinationAdtIp = '127.0.0.1'
-$acctNumberPrepend = 'AUTO'
-$withSleepMS = 500
+$acctNumberPrepend = 'AUTO_RUST'
+$withSleepMS = 1000
 
 $gender = 'M', 'F' 
 $maleName = @( 
@@ -486,15 +486,12 @@ do {
     # send adt message
     $messagePacket = ([char]11 + $(Randomize-Template) + [char]28 + [char]13) 
     $messageId = "M-$(New-Guid)"
-
-    Write-Host ' ---------------------------------------------------------- '
-    Write-Host "  Now working on iteration $($itr): $acctNum - $messageId   "
-    Write-Host ' ---------------------------------------------------------- '
-
+    
     $messagePacketFormatted = $messagePacket `
         -ireplace [regex]::Escape('{dischargeDate}'), '' `
         -ireplace [regex]::Escape('{messageId}'), $messageId
 
+    Write-Host "| Now working on iteration $($itr): $acctNum - $messageId |"
     Write-Host ("`nMessage packet:`n" + $messagePacketFormatted)
     try {
         $result = Send-Hl7MllpRobust `
@@ -505,7 +502,7 @@ do {
             -AckTimeoutMs 8000 `
             -MaxRetries 3
         
-        Write-Host "[PASS] $acctNum ($messageId) ACK=$($result.AckCode)" -ForegroundColor Green
+        Write-Host "[PASS] $acctNum ($messageId) ACK=$($result.AckCode) ATTEMPT=$($result.Attempt)`n" -ForegroundColor Green
         
         # if there is a d/c date, send additional message with d/c date
         if (-not [string]::IsNullOrEmpty($dischargeDate)) {
@@ -527,7 +524,7 @@ do {
                 -MaxRetries 3
         }
     } catch {
-        Write-Host "[FAIL] $acctNum ($messageId) $_" -ForegroundColor Red
+        Write-Host "[FAIL] $acctNum ($messageId) $_`n" -ForegroundColor Red
     }
 
     # if set to send to folder watcher then do the thing
