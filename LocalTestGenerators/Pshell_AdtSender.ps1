@@ -1,15 +1,15 @@
 #############################################################
 # ADT - Test Generator
-# Date 1/9/2026
+# Date 1/12/2026
 # Generate random account data based on the fields below
 #############################################################
 
 #region Variables
-$numAccountsCreate = 1
+$numAccountsCreate = 5
 $destinationAdtPort = 7500
 $destinationAdtIp = '127.0.0.1'
-$acctNumberPrepend = 'hl7-rust-new-certs'
-$withSleepMS = 1000
+$acctNumberPrepend = 'AUTO'
+$withSleepMS = 500
 
 $gender = 'M', 'F' 
 $maleName = @( 
@@ -206,6 +206,14 @@ function Randomize-Template {
         $randResult = [string]::Empty
 
         switch ($fieldKey) {
+            'gender' {
+                $randResult = With-Noise -valueDefault (
+                    $fieldsToRandomize[$fieldKey] | Get-Random
+                ) -valueNoise 'U' -noiseChancePercent 1
+
+                break
+            }
+
             'patientClass' {
                 $randResult = With-Noise -valueDefault (
                     $fieldsToRandomize[$fieldKey] | Get-Random
@@ -214,10 +222,16 @@ function Randomize-Template {
                 break
             }
 
-            'gender' {
-                $randResult = With-Noise -valueDefault (
-                    $fieldsToRandomize[$fieldKey] | Get-Random
-                ) -valueNoise 'U' -noiseChancePercent 1
+            'admitReason' {
+                $admitReasonObj = $fieldsToRandomize[$fieldKey] | Get-Random
+
+                # code goes into {admitReason}
+                $randResult = $admitReasonObj.Code
+
+                # description goes into {admitReasonDescription}
+                $hl7TemplateResult = $hl7TemplateResult -ireplace `
+                    [regex]::Escape('{admitReasonDescription}'), `
+                    $admitReasonObj.Description
 
                 break
             }
@@ -244,20 +258,6 @@ function Randomize-Template {
                 break
             }
 
-            'admitReason' {
-                $admitReasonObj = $fieldsToRandomize[$fieldKey] | Get-Random
-
-                # code goes into {admitReason}
-                $randResult = $admitReasonObj.Code
-
-                # description goes into {admitReasonDescription}
-                $hl7TemplateResult = $hl7TemplateResult -ireplace `
-                    [regex]::Escape('{admitReasonDescription}'), `
-                    $admitReasonObj.Description
-
-                break
-            }
-
             default {
                 $randResult = $fieldsToRandomize[$fieldKey] | Get-Random
                 break
@@ -270,42 +270,6 @@ function Randomize-Template {
     }
 
     return $hl7TemplateResult
-}
- 
-function Send-StringOverTcp ( 
-    [Parameter(Mandatory = $True)]
-    [string]$DataToSend,
-
-    [Parameter(Mandatory = $True)]
-    [string]$Hostname, 
-
-    [Parameter(Mandatory = $True)]
-    [UInt16]$Port,
-
-    [int]$SleepMS = $( if ($WithSleepMS) { $WithSleepMS } else { 0 } )
-) {
-    Start-Sleep -Milliseconds $SleepMS
-
-    $TCPClient = $null
-    $NetStream = $null
-
-    try {
-        $ErrorActionPreference = 'Stop'
-
-        $destinationIpEndpoint = New-Object Net.IPEndPoint([System.Net.IPAddress]::Parse($Hostname), $Port)
-
-        $TCPClient = New-Object Net.Sockets.TcpClient
-        $TCPClient.Connect($destinationIpEndpoint)
-
-        $NetStream = $TCPClient.GetStream()
-
-        [byte[]]$Buffer = [Text.Encoding]::ASCII.GetBytes($DataToSend)
-        $NetStream.Write($Buffer, 0, $Buffer.Length)
-        $NetStream.Flush()
-    } finally {
-        if ($NetStream) { $NetStream.Dispose() }
-        if ($TCPClient) { $TCPClient.Dispose() }
-    }
 }
 
 function Connect-TcpClientWithTimeout {
@@ -320,6 +284,7 @@ function Connect-TcpClientWithTimeout {
 
     if (-not $iar.AsyncWaitHandle.WaitOne($ConnectTimeoutMs)) {
         $client.Close()
+        
         throw "TCP connect timeout after ${ConnectTimeoutMs}ms to $Hostname`:$Port"
     }
 
@@ -379,7 +344,6 @@ function Read-MllpMessageWithTimeout {
         [void] $memStream.WriteByte($b)
     }
 
-    # HL7 is commonly ASCII; keep it simple here
     return [System.Text.Encoding]::ASCII.GetString($memStream.ToArray())
 }
 
@@ -406,12 +370,13 @@ function Get-Hl7Field {
 function Send-Hl7MllpRobust {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)] [string] $MllpPayload,   # includes VT ... FS CR
+        [Parameter(Mandatory)] [string] $MllpPayload,
         [Parameter(Mandatory)] [string] $Hostname,
         [Parameter(Mandatory)] [int] $Port,
-
         [Parameter(Mandatory)] [string] $ExpectedMessageControlId,  # your $messageId (MSH-10)
+        [int] $PreSleepMS = $( if ($withSleepMS) { $withSleepMS } else { 0 } ),
 
+        # Error handling parameters
         [int] $ConnectTimeoutMs = 5000,
         [int] $WriteTimeoutMs = 5000,
         [int] $AckTimeoutMs = 8000,
@@ -419,9 +384,12 @@ function Send-Hl7MllpRobust {
     )
 
     $bytes = [System.Text.Encoding]::ASCII.GetBytes($MllpPayload)
-
     $attempt = 0
     $lastErr = $null
+
+    if ($PreSleepMs -gt 0) {
+        Start-Sleep -Milliseconds $PreSleepMs
+    }
 
     while ($attempt -le $MaxRetries) {
         $attempt++
@@ -444,7 +412,7 @@ function Send-Hl7MllpRobust {
             $ackHl7 = Read-MllpMessageWithTimeout -Stream $stream -ReadTimeoutMs $AckTimeoutMs
 
             # Find MSA line
-            $msaLine = ($ackHl7 -split '(\r\numBytes|\numBytes|\r)') | Where-Object { $_ -like 'MSA|*' } | Select-Object -First 1
+            $msaLine = ($ackHl7 -split '(\r\n|\n|\r)') | Where-Object { $_ -like 'MSA|*' } | Select-Object -First 1
             if (-not $msaLine) { throw "No MSA segment found in ACK. Raw ACK: $ackHl7" }
 
             $msa1 = Get-Hl7Field -SegmentLine $msaLine -FieldNumber 1  # AA/AE/AR
@@ -469,7 +437,8 @@ function Send-Hl7MllpRobust {
             $lastErr = $_
             if ($attempt -gt $MaxRetries) { break }
 
-            Start-Sleep -Milliseconds ([Math]::Min(500 * [Math]::Pow(2, $attempt - 1), 5000))
+            $retryDelayMs = 500 * [Math]::Pow(2, $attempt - 1) # retry delay from base delay and attempt number
+            Start-Sleep -Milliseconds ([Math]::Min($retryDelayMs, 5000)) # sleep for computed delay, or to a maximum delay
         } finally {
             if ($stream) { $stream.Dispose() }
             if ($client) { 
@@ -504,52 +473,61 @@ do {
         $admitDateObj.AddDays((Get-Random -Min 0 -Maximum 7)).ToString('yyyyMMddhhmm')
     ) -noiseChancePercent 20
     
-    Write-Host ' ---------------------------------------------------------- '
-    Write-Host "  Now working on iteration $($itr): $acctNum - $admitDate   "
-    Write-Host ' ---------------------------------------------------------- '
-    
     # hl7 template with replaceable template field values
     $hl7Template = (
-        "MSH|^~\&|REG|WMC|{facility}|WMC|$messageDate||ADT^{messageType}|{messageId}|||`r`numBytes" +
-        "PID|||$mrnNum||{lastName}^{firstName}^{middleName}^^^||$birthDate|{gender}||C||||||S||$acctNum|`r`numBytes" +
-        "PV1||{patientClass}|{facility}^{room}^{bed}|Admit Type|||00139^Person^Doctor^P^^^MD|||{hospitalService}||||{admitSource}|||00139^Person^Doctor^P^^^MD|{patientType}||SP||||||||||||||||d/c disp||||||||$admitDate|{dischargeDate}|||||`r`numBytes" +
-        "PV2|||^{admitReasonDescription}||`r`numBytes" +
-        "DG1||ICD10-CM|{admitReason}|{admitReasonDescription}||||||`r`numBytes" +
-        "IN1||^{payor}||{payor}||||||||||||||||||Payor ID|||||||||||||||||||||||`r`numBytes"
+        "MSH|^~\&|REG|WMC|{facility}|WMC|$messageDate||ADT^{messageType}|{messageId}|||`r`n" +
+        "PID|||$mrnNum||{lastName}^{firstName}^{middleName}^^^||$birthDate|{gender}||C||||||S||$acctNum|`r`n" +
+        "PV1||{patientClass}|{facility}^{room}^{bed}|Admit Type|||00139^Person^Doctor^P^^^MD|||{hospitalService}||||{admitSource}|||00139^Person^Doctor^P^^^MD|{patientType}||SP||||||||||||||||d/c disp||||||||$admitDate|{dischargeDate}|||||`r`n" +
+        "PV2|||^{admitReasonDescription}||`r`n" +
+        "DG1||ICD10-CM|{admitReason}|{admitReasonDescription}||||||`r`n" +
+        "IN1||^{payor}||{payor}||||||||||||||||||Payor ID|||||||||||||||||||||||`r`n"
     )
 
     # send adt message
     $messagePacket = ([char]11 + $(Randomize-Template) + [char]28 + [char]13) 
     $messageId = "M-$(New-Guid)"
 
+    Write-Host ' ---------------------------------------------------------- '
+    Write-Host "  Now working on iteration $($itr): $acctNum - $messageId   "
+    Write-Host ' ---------------------------------------------------------- '
+
     $messagePacketFormatted = $messagePacket `
         -ireplace [regex]::Escape('{dischargeDate}'), '' `
         -ireplace [regex]::Escape('{messageId}'), $messageId
 
-    $dcSuffix = ''
-    if (-not [string]::IsNullOrEmpty($dischargeDate)) {
-        $dcSuffix = ' (with d/c ' + $dischargeDate + ')'
-    }
+    Write-Host ("`nMessage packet:`n" + $messagePacketFormatted)
+    try {
+        $result = Send-Hl7MllpRobust `
+            -MllpPayload $messagePacketFormatted `
+            -Hostname $destinationAdtIp `
+            -Port $destinationAdtPort `
+            -ExpectedMessageControlId $messageId `
+            -AckTimeoutMs 8000 `
+            -MaxRetries 3
+        
+        Write-Host "[PASS] $acctNum ($messageId) ACK=$($result.AckCode)" -ForegroundColor Green
+        
+        # if there is a d/c date, send additional message with d/c date
+        if (-not [string]::IsNullOrEmpty($dischargeDate)) {
+            $messageId_dc = "$($messageId)-DC" 
+            
+            Write-Host "Sending discharge message ($messageId_dc) ..."
 
-    Write-Host ("`nResult" + $dcSuffix + ":`numBytes" + $messagePacketFormatted)
+            # send w/ discharge date (TODO add d/c disp)
+            $messagePacketWithDischarge = $messagePacket `
+                -ireplace [regex]::Escape('{dischargeDate}'), $dischargeDate `
+                -ireplace [regex]::Escape('{messageId}'), $messageId_dc
 
-    $result = Send-Hl7MllpRobust `
-        -MllpPayload $messagePacketFormatted `
-        -Hostname $destinationAdtIp `
-        -Port $destinationAdtPort `
-        -ExpectedMessageControlId $messageId `
-        -AckTimeoutMs 8000 `
-        -MaxRetries 3
-
-    Write-Host $result
-
-    # if there is a d/c date, send additional message with d/c date
-    if (-not [string]::IsNullOrEmpty($dischargeDate)) { 
-        $messagePacketWithDischarge = $messagePacket ` # send w/ discharge date (TODO add d/c disp)
-            -ireplace [regex]::Escape('{dischargeDate}'), $dischargeDate `
-            -ireplace [regex]::Escape('{messageId}'), "$($messageId)-DC"
-
-        Send-StringOverTcp -DataToSend $messagePacketWithDischarge -Hostname $destinationAdtIp -Port $destinationAdtPort
+            Send-Hl7MllpRobust `
+                -MllpPayload $messagePacketWithDischarge `
+                -Hostname $destinationAdtIp `
+                -Port $destinationAdtPort `
+                -ExpectedMessageControlId $messageId_dc `
+                -AckTimeoutMs 8000 `
+                -MaxRetries 3
+        }
+    } catch {
+        Write-Host "[FAIL] $acctNum ($messageId) $_" -ForegroundColor Red
     }
 
     # if set to send to folder watcher then do the thing
