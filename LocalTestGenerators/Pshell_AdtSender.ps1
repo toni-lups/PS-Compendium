@@ -9,7 +9,7 @@ $numAccountsCreate = 5
 $destinationAdtPort = 7500
 $destinationAdtIp = '127.0.0.1'
 $acctNumberPrepend = 'AUTO_RUST'
-$withSleepMS = 1000
+$withSleepMS = 250
 
 $gender = 'M', 'F' 
 $maleName = @( 
@@ -439,7 +439,8 @@ function Send-Hl7MllpRobust {
             $lastErr = $_
             if ($attempt -gt $MaxRetries) { break }
 
-            Start-Sleep -Milliseconds 500
+            # for production-grade, this sleep would be derived and increase by attempt num to an upper limit
+            Start-Sleep -Milliseconds 250
         } finally {
             if ($stream) { $stream.Dispose() }
             if ($client) { 
