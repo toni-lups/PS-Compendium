@@ -272,6 +272,7 @@ function Randomize-Template {
     return $hl7TemplateResult
 }
 
+#region TCP Helpers
 function Connect-TcpClientWithTimeout {
     param(
         [Parameter(Mandatory)] [string] $Hostname,
@@ -366,6 +367,7 @@ function Get-Hl7Field {
     
     return $null
 }
+#endregion
 
 function Send-Hl7MllpRobust {
     [CmdletBinding()]
@@ -450,7 +452,7 @@ function Send-Hl7MllpRobust {
 
     throw "Send/ACK failed after $($MaxRetries + 1) attempts. Last error: $($lastErr.Exception.Message)"
 }
-
+#endregion
 
 $itr = 0
 do {
@@ -491,7 +493,7 @@ do {
         -ireplace [regex]::Escape('{dischargeDate}'), '' `
         -ireplace [regex]::Escape('{messageId}'), $messageId
 
-    Write-Host "| Now working on iteration $($itr): $acctNum - $messageId |"
+    Write-Host "<< Now working on iteration $($itr): $acctNum - $messageId >>"
     Write-Host ("`nMessage packet:`n" + $messagePacketFormatted)
     try {
         $result = Send-Hl7MllpRobust `
@@ -502,13 +504,9 @@ do {
             -AckTimeoutMs 8000 `
             -MaxRetries 3
         
-        Write-Host "[PASS] $acctNum ($messageId) ACK=$($result.AckCode) ATTEMPT=$($result.Attempt)`n" -ForegroundColor Green
-        
         # if there is a d/c date, send additional message with d/c date
         if (-not [string]::IsNullOrEmpty($dischargeDate)) {
             $messageId_dc = "$($messageId)-DC" 
-            
-            Write-Host "Sending discharge message ($messageId_dc) ..."
 
             # send w/ discharge date (TODO add d/c disp)
             $messagePacketWithDischarge = $messagePacket `
@@ -521,13 +519,17 @@ do {
                 -Port $destinationAdtPort `
                 -ExpectedMessageControlId $messageId_dc `
                 -AckTimeoutMs 8000 `
-                -MaxRetries 3
+                -MaxRetries 3 | Out-Null
+            
+            Write-Host "Additional discharge message sent: ($messageId_dc)"
         }
+
+        Write-Host "[PASS] $acctNum ($messageId) ACK=$($result.AckCode) ATTEMPT=$($result.Attempt)`n" -ForegroundColor Green
     } catch {
-        Write-Host "[FAIL] $acctNum ($messageId) $_`n" -ForegroundColor Red
+        Write-Host "[FAIL] $acctNum ($messageId) ATTEMPT=$($result.Attempt) ERR=$_`n" -ForegroundColor Red
     }
 
-    # if set to send to folder watcher then do the thing
+    # if set to send to folder watcher then do the thing | TODO verify this functionality works
     if ($createPDF) {
         Copy-Item $sourceFile (
             $pdfInterfaceFolder + (
@@ -536,4 +538,3 @@ do {
         )
     }
 } until ($itr -eq $numAccountsCreate)
-
