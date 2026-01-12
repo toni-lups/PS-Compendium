@@ -439,8 +439,7 @@ function Send-Hl7MllpRobust {
             $lastErr = $_
             if ($attempt -gt $MaxRetries) { break }
 
-            $retryDelayMs = 500 * [Math]::Pow(2, $attempt - 1) # retry delay from base delay and attempt number
-            Start-Sleep -Milliseconds ([Math]::Min($retryDelayMs, 5000)) # sleep for computed delay, or to a maximum delay
+            Start-Sleep -Milliseconds 500
         } finally {
             if ($stream) { $stream.Dispose() }
             if ($client) { 
