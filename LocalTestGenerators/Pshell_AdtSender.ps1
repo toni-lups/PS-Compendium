@@ -526,7 +526,7 @@ do {
 
         Write-Host "[PASS] $acctNum ($messageId) ACK=$($result.AckCode) ATTEMPT=$($result.Attempt)`n" -ForegroundColor Green
     } catch {
-        Write-Host "[FAIL] $acctNum ($messageId) ATTEMPT=$($result.Attempt) ERR=$_`n" -ForegroundColor Red
+        Write-Host "[FAIL] $acctNum ($messageId) ERR=$_`n" -ForegroundColor Red
     }
 
     # if set to send to folder watcher then do the thing | TODO verify this functionality works
