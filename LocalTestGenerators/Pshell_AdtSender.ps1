@@ -5,7 +5,7 @@
 #############################################################
 
 #region Variables
-$numAccountsCreate = 5
+$numAccountsCreate = 50
 $destinationAdtPort = 7500
 $destinationAdtIp = '127.0.0.1'
 $acctNumberPrepend = 'AUTO_RUST'
@@ -173,20 +173,20 @@ function With-Noise {
     param(
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()] 
-        [string]$valueDefault,
+        [string]$ValueDefault,
 
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
-        [string]$valueNoise, 
+        [string]$ValueNoise, 
 
         [ValidateRange(1, 100)]
-        [int]$noiseChancePercent = 10
+        [int]$NoiseChancePercent = 10
     )
 
-    $resolvedValue = if ( (Get-Random -Minimum 1 -Maximum 101) -le $noiseChancePercent ) {
-        $valueNoise
+    $resolvedValue = if ( (Get-Random -Minimum 1 -Maximum 101) -le $NoiseChancePercent ) {
+        $ValueNoise
     } else {
-        $valueDefault
+        $ValueDefault
     }
 
     return $resolvedValue
@@ -200,24 +200,23 @@ function Randomize-Template {
     
     # remember replacements so later fields can depend on earlier
     $replacementsHistory = @{}
-
     foreach ($fieldKey in $fieldsToRandomize.Keys) {
 
         $randResult = [string]::Empty
 
         switch ($fieldKey) {
             'gender' {
-                $randResult = With-Noise -valueDefault (
+                $randResult = With-Noise -ValueDefault (
                     $fieldsToRandomize[$fieldKey] | Get-Random
-                ) -valueNoise 'U' -noiseChancePercent 1
+                ) -ValueNoise 'U' -NoiseChancePercent 1
 
                 break
             }
 
             'patientClass' {
-                $randResult = With-Noise -valueDefault (
+                $randResult = With-Noise -ValueDefault (
                     $fieldsToRandomize[$fieldKey] | Get-Random
-                ) -valueNoise 'U' -noiseChancePercent 1
+                ) -ValueNoise 'U' -NoiseChancePercent 1
 
                 break
             }
@@ -471,9 +470,9 @@ do {
     $admitDate = $admitDateObj.ToString('yyyyMMddhhmm')
 
     # create a d/c date (sometimes), some range of days after admit date
-    $dischargeDate = With-Noise -valueDefault '' -valueNoise (
+    $dischargeDate = With-Noise -ValueDefault '' -ValueNoise (
         $admitDateObj.AddDays((Get-Random -Min 0 -Maximum 7)).ToString('yyyyMMddhhmm')
-    ) -noiseChancePercent 20
+    ) -NoiseChancePercent 20
     
     # hl7 template with replaceable template field values
     $hl7Template = (
