@@ -40,9 +40,6 @@ param(
 
 # initialize values
 begin {
-
-    $slowOpThresholdMS = 100
-
     # to hold pass-through pipeline input to jq
     $script:pipelineBuffer = @()
     
