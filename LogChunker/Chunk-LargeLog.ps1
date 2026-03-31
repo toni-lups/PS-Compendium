@@ -1,32 +1,44 @@
-$in  = "D:\RabbitMQ\log\rabbit@m-cactrns04100.log"
-$outDir = "D:\RabbitMQ\log\log_chunks"
-$chunkSize = 50MB
+param(
+  [Parameter(Mandatory, HelpMessage = 'Supply a log file')]
+  [ValidateScript({(Test-Path $_ -PathType Leaf) -and ('.log', '.txt', '.json') -icontains [System.IO.Path]::GetExtension($_)})]
+  [string] $LogPath,
 
+  [ValidateRange(1, 500)]
+  [int] $ChunkSizeMB = 50
+)
+
+if ((Get-Item $LogPath).length / 1MB -le $ChunkSizeMB) {
+  Write-Host "Supplied file is smaller than configured chunk size ($ChunkSizeMB MB), exiting ..."; exit 0
+}
+
+$outDir = "$(Split-Path $LogPath -Parent)\LogChunks"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 $enc = [System.Text.Encoding]::UTF8
-$part = 1
-$bytes = 0
-$writer = $null
+$currChunkBytes = 0
+$script:chunkNum = 1
 
-function New-Writer($part) {
-  $path = Join-Path $outDir ("big.log.part{0:D4}.log" -f $part)
-  return New-Object System.IO.StreamWriter($path, $false, $enc)
+function Get-ChunkWriter {
+  $path = Join-Path $outDir ("big.log.part{0:D4}.log" -f $script:chunkNum)
+  $script:chunkNum++
+
+  return [System.IO.StreamWriter]::new($path, $false, $enc)
 }
 
-$writer = New-Writer $part
-
-Get-Content -LiteralPath $in -ReadCount 1000 | ForEach-Object {
+$writer = Get-ChunkWriter
+Get-Content -LiteralPath $LogPath -ReadCount 1000 | ForEach-Object {
   foreach ($line in $_) {
     $lineBytes = $enc.GetByteCount($line + "`r`n")
-    if ($bytes -gt 0 -and ($bytes + $lineBytes) -gt $chunkSize) {
+
+    if (($currChunkBytes -gt 0) -and ($currChunkBytes + $lineBytes) -gt $ChunkSizeMB * 1MB) {
       $writer.Dispose()
-      $part++
-      $writer = New-Writer $part
-      $bytes = 0
+      
+      $writer = Get-ChunkWriter
+      $currChunkBytes = 0
     }
+
     $writer.WriteLine($line)
-    $bytes += $lineBytes
+    $currChunkBytes += $lineBytes
   }
 }
 
