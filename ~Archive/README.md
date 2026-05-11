@@ -1,1 +1,1 @@
-Contains work that should not be used and is no longer relevant, but is archived for historical reference
+Contains wip scripts that should not be used, or abandonded projects
