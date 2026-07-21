@@ -1,3 +1,3 @@
 # PS-Compendium
 
-Collecting together useful small PowerShell scripts, and cataloging projects
+Collecting together adminisitration and utlity PowerShell scripts
